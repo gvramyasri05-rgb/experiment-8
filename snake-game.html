@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Snake Game — Collaborative</title>
+  <style>
+    :root{
+      --bg:#0b1220;
+      --board:#08101a;
+      --accent:#4ee1a6;
+      --muted:#9aa6b2;
+      --danger:#ff6b6b;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+    }
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,var(--bg),#06101a);color:#e6eef6}
+    .wrap{min-height:100vh;display:flex;flex-direction:column;gap:18px;align-items:center;justify-content:center;padding:24px}
+    header{display:flex;gap:18px;align-items:center}
+    h1{font-size:20px;margin:0}
+    .container{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;max-width:1100px;width:100%}
+    .board-panel{background:var(--board);border-radius:12px;padding:14px;box-shadow:0 8px 30px rgba(2,6,12,0.6);display:flex;flex-direction:column;gap:12px}
+    canvas{background:linear-gradient(180deg,#07101a,#06101a);display:block;border-radius:8px}
+
+    .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    button{padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:var(--accent);cursor:pointer}
+    button.secondary{color:var(--muted)}
+    .meta{display:flex;gap:12px;align-items:center}
+    .score{font-weight:700;color:var(--accent)}
+
+    .help{max-width:360px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.02)}
+    .help p{margin:8px 0;color:var(--muted);font-size:13px}
+    .kbd{display:inline-block;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);font-size:12px;background:rgba(255,255,255,0.01)}
+
+    footer{margin-top:6px;color:var(--muted);font-size:12px}
+
+    /* responsive sizing */
+    @media (min-width:900px){
+      .board-panel{flex:1}
+      .help{width:300px}
+    }
+    @media (max-width:640px){
+      h1{font-size:18px}
+      canvas{width:320px;height:320px}
+      .container{flex-direction:column;align-items:center}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Snake — Collaborative Demo</h1>
+      <div class="meta">
+        <div>Author: <strong>Two-member repo</strong></div>
+      </div>
+    </header>
+
+    <div class="container">
+      <section class="board-panel">
+        <canvas id="game" width="480" height="480"></canvas>
+
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+          <div class="controls">
+            <button id="startBtn">Start</button>
+            <button id="pauseBtn" class="secondary">Pause</button>
+            <button id="resetBtn" class="secondary">Reset</button>
+            <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px">
+              Speed
+              <input id="speedRange" type="range" min="4" max="16" value="8" step="1" style="width:120px">
+            </label>
+          </div>
+
+          <div style="display:flex;gap:12px;align-items:center">
+            <div class="score">Score: <span id="score">0</span></div>
+            <div style="color:var(--muted);font-size:13px">High: <span id="highScore">0</span></div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="help">
+        <strong>How to play</strong>
+        <p>Use arrow keys or WASD to control the snake. Eat food to grow and score points. Avoid hitting walls or the snake body.</p>
+        <p>Keyboard: <span class="kbd">↑</span> <span class="kbd">↓</span> <span class="kbd">←</span> <span class="kbd">→</span> or <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>.</p>
+        <p>Suggested GitHub tasks for two members are included in the top comment of this file.</p>
+      </aside>
+    </div>
+
+    <footer>Tip: Split work across branches and open PRs for review — great for pair collaboration!</footer>
+  </div>
+
+  <script>
+  // ====== Snake Game (modular, single-file) ======
+  // Designed to be simple and easy to extend. Good split points for collaboration:
+  // - UI & CSS tweaks
+  // - Game logic & features (powerups, levels, save high score)
+
+  (() => {
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    let gridSize = 16; // pixels per cell (will scale with canvas)
+    const cols = Math.floor(canvas.width / gridSize);
+    const rows = Math.floor(canvas.height / gridSize);
+
+    // Game state
+    const state = {
+      snake: [{x: Math.floor(cols/2), y: Math.floor(rows/2)}],
+      dir: {x:1,y:0},
+      nextDir: {x:1,y:0},
+      food: null,
+      running: false,
+      interval: null,
+      speed: 8, // ticks per second
+      score: 0,
+      highScore: 0
+    };
+
+    // DOM
+    const startBtn = document.getElementById('startBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const scoreEl = document.getElementById('score');
+    const highEl = document.getElementById('highScore');
+    const speedRange = document.getElementById('speedRange');
+
+    // ----- utilities -----
+    function randCell(){
+      return {x: Math.floor(Math.random()*cols), y: Math.floor(Math.random()*rows)};
+    }
+    function eq(a,b){return a.x===b.x && a.y===b.y}
+
+    // ----- persistence (localStorage for high score) -----
+    function loadHigh(){
+      try{const v = localStorage.getItem('snake-high'); if(v) state.highScore = parseInt(v,10)||0;}catch(e){}
+      highEl.textContent = state.highScore;
+    }
+    function saveHigh(){
+      try{localStorage.setItem('snake-high', String(state.highScore));}catch(e){}
+    }
+
+    // ----- game lifecycle -----
+    function reset(fullReset=true){
+      state.snake = [{x: Math.floor(cols/2), y: Math.floor(rows/2)}];
+      state.dir = {x:1,y:0}; state.nextDir = {x:1,y:0};
+      state.food = placeFood();
+      state.score = 0;
+      updateScore();
+      if(fullReset){stop();}
+    }
+
+    function start(){
+      if(state.running) return;
+      state.running = true;
+      tickLoop();
+    }
+    function stop(){
+      state.running = false;
+      if(state.interval){ cancelAnimationFrame(state.interval); state.interval = null; }
+    }
+
+    // ----- game loop using rAF with timing based on speed -----
+    let lastTime = 0;
+    function tickLoop(ts){
+      if(!state.running) return;
+      if(!lastTime) lastTime = ts;
+      const fps = state.speed; // ticks per second
+      const msPerTick = 1000 / fps;
+      if(ts - lastTime >= msPerTick){
+        lastTime = ts;
+        tick();
+      }
+      state.interval = requestAnimationFrame(tickLoop);
+    }
+
+    // ----- tick: move snake, handle collisions -----
+    function tick(){
+      // apply buffered direction (prevents reversing directly)
+      if(Math.abs(state.nextDir.x) !== Math.abs(state.dir.x) || Math.abs(state.nextDir.y) !== Math.abs(state.dir.y)){
+        state.dir = {...state.nextDir};
+      }
+
+      const head = {...state.snake[0]};
+      head.x += state.dir.x;
+      head.y += state.dir.y;
+
+      // wall collision -> game over
+      if(head.x < 0 || head.x >= cols || head.y < 0 || head.y >= rows){
+        return gameOver();
+      }
+
+      // self collision
+      for(let i=0;i<state.snake.length;i++){
+        if(eq(head, state.snake[i])) return gameOver();
+      }
+
+      state.snake.unshift(head);
+
+      // food
+      if(eq(head, state.food)){
+        state.score += 10;
+        if(state.score > state.highScore) state.highScore = state.score;
+        updateScore();
+        state.food = placeFood();
+      } else {
+        state.snake.pop();
+      }
+
+      render();
+    }
+
+    function gameOver(){
+      stop();
+      // simple flash effect
+      blinkBoard().then(()=>{
+        if(state.score > state.highScore) saveHigh();
+        // leave the board as-is; require manual reset or start
+      });
+    }
+
+    function blinkBoard(){
+      return new Promise(resolve=>{
+        let c=0; const max=6;
+        const id = setInterval(()=>{
+          ctx.fillStyle = (c%2===0)?'#ffefd5':'#07121b';
+          ctx.fillRect(0,0,canvas.width,canvas.height);
+          c++; if(c>max){ clearInterval(id); resolve(); }
+        },80);
+      });
+    }
+
+    function placeFood(){
+      let pos = randCell();
+      // avoid placing on snake
+      const occupied = new Set(state.snake.map(s=>s.x+','+s.y));
+      let tries = 0;
+      while(occupied.has(pos.x+','+pos.y) && tries < 1000){ pos = randCell(); tries++; }
+      return pos;
+    }
+
+    // ----- rendering -----
+    function render(){
+      // clear
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      // draw grid (subtle)
+      const cell = gridSize;
+      ctx.save();
+      ctx.globalAlpha = 0.06;
+      for(let x=0;x<cols;x++){
+        for(let y=0;y<rows;y++){
+          // no-op: keep grid subtle by using background gradient
+        }
+      }
+      ctx.restore();
+
+      // draw food
+      drawCell(state.food.x, state.food.y, true);
+
+      // draw snake body
+      for(let i=state.snake.length-1;i>=0;i--){
+        const s = state.snake[i];
+        const isHead = i===0;
+        drawCell(s.x, s.y, false, isHead, i);
+      }
+    }
+
+    function drawCell(cx, cy, isFood=false, isHead=false, index=0){
+      const x = cx * gridSize;
+      const y = cy * gridSize;
+      const pad = Math.max(1, Math.floor(gridSize * 0.08));
+      const w = gridSize - pad*2;
+      const h = gridSize - pad*2;
+
+      if(isFood){
+        ctx.fillStyle = 'rgba(255,120,100,0.95)';
+        roundRect(ctx, x+pad, y+pad, w, h, 4);
+        ctx.fill();
+        return;
+      }
+
+      // gradient for body
+      if(isHead){
+        ctx.fillStyle = 'rgba(78,225,166,0.98)';
+      } else {
+        const t = Math.max(0, Math.min(1, index/state.snake.length));
+        const alpha = 0.35 + 0.6 * (1 - t);
+        ctx.fillStyle = `rgba(78,225,166,${alpha.toFixed(2)})`;
+      }
+      roundRect(ctx, x+pad, y+pad, w, h, 3);
+      ctx.fill();
+    }
+
+    function roundRect(ctx, x, y, w, h, r){
+      ctx.beginPath();
+      ctx.moveTo(x+r, y);
+      ctx.arcTo(x+w, y, x+w, y+h, r);
+      ctx.arcTo(x+w, y+h, x, y+h, r);
+      ctx.arcTo(x, y+h, x, y, r);
+      ctx.arcTo(x, y, x+w, y, r);
+      ctx.closePath();
+    }
+
+    // ----- input -----
+    window.addEventListener('keydown', (e)=>{
+      const key = e.key;
+      if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d','W','A','S','D'].includes(key)){
+        e.preventDefault();
+      }
+      switch(key){
+        case 'ArrowUp': case 'w': case 'W': state.nextDir = {x:0,y:-1}; break;
+        case 'ArrowDown': case 's': case 'S': state.nextDir = {x:0,y:1}; break;
+        case 'ArrowLeft': case 'a': case 'A': state.nextDir = {x:-1,y:0}; break;
+        case 'ArrowRight': case 'd': case 'D': state.nextDir = {x:1,y:0}; break;
+        case ' ': // space toggles pause/start
+          if(state.running) stop(); else start();
+          break;
+      }
+    });
+
+    // ----- UI handlers -----
+    startBtn.addEventListener('click', ()=>{ start(); });
+    pauseBtn.addEventListener('click', ()=>{ if(state.running) stop(); else start(); });
+    resetBtn.addEventListener('click', ()=>{ reset(true); render(); });
+
+    speedRange.addEventListener('input', (e)=>{
+      state.speed = parseInt(e.target.value,10)||8;
+    });
+
+    function updateScore(){
+      scoreEl.textContent = state.score;
+      highEl.textContent = state.highScore;
+    }
+
+    // ----- initial setup -----
+    function fitGrid(){
+      // make gridSize fit nicely to canvas (adjust to maintain integer cols/rows)
+      const desired = 16; // base
+      gridSize = desired; // keep simple for now
+    }
+
+    function init(){
+      loadHigh();
+      fitGrid();
+      reset(false);
+      render();
+    }
+
+    // expose a small API (helpful for tests or future modularization)
+    window.SnakeGame = {
+      start, stop, reset, state
+    };
+
+    init();
+  })();
+  </script>
+</body>
+</html>
